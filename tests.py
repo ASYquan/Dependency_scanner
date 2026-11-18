@@ -170,3 +170,40 @@ def test_commit_from_gitdir_file(tmp_path):
 def test_commit_missing(tmp_path):
     repo = make_repo(tmp_path, "r")
     assert sbom.git_commit(repo) == ""
+
+
+def test_csv_escapes_formulas(tmp_path):
+    make_repo(tmp_path, "a", requirements="foo==1.*\nbar==2.0\n")
+    make_repo(
+        tmp_path,
+        "b",
+        package_json={"dependencies": {'=HYPERLINK("http://x")': "1.0.0", "baz": "=1.0.0"}},
+    )
+    assert run_cli(tmp_path) == 0
+
+    with open(tmp_path / "sbom.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [(r["name"], r["version"]) for r in rows] == [
+        ("foo", "'==1.*"),
+        ("bar", "2.0"),
+        ("'=HYPERLINK(\"http://x\")", "1.0.0"),
+        ("baz", "'=1.0.0"),
+    ]
+
+    data = json.loads((tmp_path / "sbom.json").read_text())
+    assert [(d["name"], d["version"]) for d in data["dependencies"]] == [
+        ("foo", "==1.*"),
+        ("bar", "2.0"),
+        ('=HYPERLINK("http://x")', "1.0.0"),
+        ("baz", "=1.0.0"),
+    ]
+
+
+@pytest.mark.parametrize("value", ["=1+1", "+1", "-1", "@SUM(A1)", "\t=1", "\r=1"])
+def test_csv_safe_prefixes_formulas(value):
+    assert sbom._csv_safe(value) == "'" + value
+
+
+@pytest.mark.parametrize("value", ["requests", "2.31.0", "^18.2.0", ">=2.0", "", "a=b"])
+def test_csv_safe_keeps_normal_values(value):
+    assert sbom._csv_safe(value) == value

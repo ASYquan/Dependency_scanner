@@ -48,6 +48,9 @@ CSV_FILE = "sbom.csv"
 JSON_FILE = "sbom.json"
 COLUMNS = ("name", "version", "type", "path", "scope", "purl", "repository", "commit")
 
+# Spreadsheet programs treat cells starting with these as formulas
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
@@ -182,7 +185,18 @@ def write_csv(dependencies: Iterable[Dependency], path: StrPath) -> None:
         writer = csv.DictWriter(f, fieldnames=COLUMNS, extrasaction="ignore")
         writer.writeheader()
         for dep in dependencies:
-            writer.writerow({col: dep.get(col, "") for col in COLUMNS})
+            writer.writerow({col: _csv_safe(dep.get(col, "")) for col in COLUMNS})
+
+
+def _csv_safe(value: str) -> str:
+    """Prefix value with ' so spreadsheet programs show it as text, not a formula.
+
+    Package names and versions come from files in the scanned repositories, so
+    a value like '=HYPERLINK(...)' must not run when sbom.csv is opened.
+    """
+    if value.startswith(FORMULA_PREFIXES):
+        return "'" + value
+    return value
 
 
 def write_json(
