@@ -4,7 +4,7 @@ A command line tool that scans a directory of git repositories for pip and npm
 dependencies and saves a software bill of materials (SBOM) in CSV and JSON.
 
 Requires Python 3.10 or newer. Only the standard library is used, so there is
-nothing to install.
+nothing to install. On older versions the tool stops with an error saying so.
 
 ## Usage
 
@@ -26,7 +26,7 @@ Exit codes:
 | Code | Meaning |
 |------|---------|
 | 0 | SBOM saved |
-| 1 | The directory doesn't exist, contains no git repositories, a dependency file couldn't be read, or the SBOM couldn't be written. When a single dependency file is broken, the SBOM is still saved without it. |
+| 1 | Python is older than 3.10, the directory doesn't exist, contains no git repositories, a dependency file couldn't be read, or the SBOM couldn't be written. When a single dependency file is broken, the SBOM is still saved without it. |
 | 2 | Invalid command line arguments |
 
 Errors and warnings are printed to stderr.
@@ -46,6 +46,13 @@ Errors and warnings are printed to stderr.
 | `purl` | [Package URL](https://github.com/package-url/purl-spec), e.g. `pkg:pypi/requests@2.31.0`. The version is only included when it is exact. |
 | `repository` | Name of the repository directory |
 | `commit` | Commit hash of the repository's HEAD, empty if unknown |
+
+With a `package-lock.json`, the SBOM has many more rows than `package.json`
+lists, because every installed package is included. For example, Mender's
+[gui](https://github.com/mendersoftware/gui) gives 107 `direct` rows from
+`package.json` and 1,095 `indirect` rows from `package-lock.json`. Keep only
+the rows where `relationship` is `direct` to get one row per dependency listed
+in `requirements.txt` and `package.json`.
 
 `sbom.json` contains the same entries under `dependencies`, together with when
 the SBOM was generated, the scanned directory, and the repositories that were
@@ -91,7 +98,7 @@ included:
 
 - Only the immediate subdirectories of the given directory are scanned. A subdirectory counts as a git repository if it contains `.git`, either a directory or a file (worktrees and submodules).
 - Only `requirements.txt` and `package.json` in the top level of each repository are read.
-- A repository with neither file is skipped with a warning instead of failing the whole run.
+- A repository with neither file is skipped with a warning instead of failing the whole run. It still counts towards "Found N repositories", which counts the git repositories in the directory, not the ones in the SBOM.
 - Lines in `requirements.txt` that aren't package requirements are skipped: options such as `-r`, `-e`, `--index-url`, and URLs, VCS links and local paths without a package name. Extras and environment markers are removed (`requests[socks]; python_version>"3.8"` becomes `requests`).
 - From `package.json`, `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` are included, so the same package can appear more than once with different scopes.
 - If a repository has `package-lock.json` next to `package.json`, every installed package in it that isn't a direct dependency is added as `indirect`, with the exact installed version. A package installed in several versions gets one row per version. Lock file versions 1, 2 and 3 are supported.
@@ -107,6 +114,7 @@ included:
 - Repositories nested deeper than one level, and dependency files in subdirectories (monorepos), are not found.
 - Other dependency files (`pyproject.toml`, `setup.py`, `Pipfile`, `yarn.lock`, ...) are not supported.
 - Symlinked directories are followed, so a repository linked twice is listed twice.
+- The `commit` column is empty for repositories that use git's newer reftable format (`git init --ref-format=reftable`), because only the classic `HEAD`, ref and `packed-refs` files are read. No warning is printed.
 
 ## Ideas for next features
 
@@ -117,5 +125,6 @@ included:
 - Compare two SBOMs to show which dependencies were added, removed or upgraded.
 - Search the SBOM: "which repositories use libawesomejson 1.2.3?"
 - Recursive scanning with a configurable depth.
+- Read the commit from reftable repositories, or at least warn when it can't be found.
 - License information for each dependency.
 
