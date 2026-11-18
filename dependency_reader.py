@@ -6,12 +6,13 @@ and returns one record per dependency.
 
 import json
 import os
+from collections.abc import Iterator
 
 REQUIREMENTS_FILE = "requirements.txt"
 PACKAGE_JSON_FILE = "package.json"
 
 # package.json section -> scope written to the SBOM
-NPM_SECTIONS = (
+NPM_SECTIONS: tuple[tuple[str, str], ...] = (
     ("dependencies", "runtime"),
     ("devDependencies", "dev"),
     ("optionalDependencies", "optional"),
@@ -20,18 +21,22 @@ NPM_SECTIONS = (
 
 VERSION_OPERATOR_CHARS = "=<>!~("
 
+# A dependency record: name, version, type, scope, path, purl and repository
+Dependency = dict[str, str]
+StrPath = str | os.PathLike[str]
+
 
 class DependencyFileError(Exception):
     """A dependency file exists but could not be read or parsed."""
 
 
-def find_dependency_files(repo_path):
+def find_dependency_files(repo_path: StrPath) -> list[str]:
     """Return absolute paths of the dependency files in the top level of repo_path."""
     repo_path = os.path.abspath(repo_path)
     if not os.path.isdir(repo_path):
         raise NotADirectoryError(f"'{repo_path}' is not a directory")
 
-    found = []
+    found: list[str] = []
     for filename in (REQUIREMENTS_FILE, PACKAGE_JSON_FILE):
         path = os.path.join(repo_path, filename)
         if os.path.isfile(path):
@@ -39,12 +44,12 @@ def find_dependency_files(repo_path):
     return found
 
 
-def read_repo(repo_path):
+def read_repo(repo_path: StrPath) -> list[Dependency]:
     """Return all dependencies found in repo_path, from every supported file."""
     repo_path = os.path.abspath(repo_path)
     repository = os.path.basename(repo_path.rstrip(os.sep))
 
-    dependencies = []
+    dependencies: list[Dependency] = []
     for path in find_dependency_files(repo_path):
         if os.path.basename(path) == REQUIREMENTS_FILE:
             dependencies.extend(parse_requirements(path))
@@ -59,12 +64,12 @@ def read_repo(repo_path):
 # --- requirements.txt -------------------------------------------------------
 
 
-def parse_requirements(path):
+def parse_requirements(path: StrPath) -> list[Dependency]:
     """Parse a pip requirements.txt file."""
     path = os.path.abspath(path)
     text = _read_text(path)
 
-    dependencies = []
+    dependencies: list[Dependency] = []
     for line in _join_continued_lines(text):
         parsed = _parse_requirement_line(line)
         if parsed is None:
@@ -83,7 +88,7 @@ def parse_requirements(path):
     return dependencies
 
 
-def _join_continued_lines(text):
+def _join_continued_lines(text: str) -> Iterator[str]:
     """Yield logical lines, joining lines that end with a backslash."""
     pending = ""
     for raw in text.splitlines():
@@ -97,7 +102,7 @@ def _join_continued_lines(text):
         yield pending
 
 
-def _strip_comment(line):
+def _strip_comment(line: str) -> str:
     # pip only treats '#' as a comment at the start of a line or after
     # whitespace, so URL fragments like '#egg=name' are left alone.
     for i, char in enumerate(line):
@@ -106,7 +111,7 @@ def _strip_comment(line):
     return line
 
 
-def _parse_requirement_line(line):
+def _parse_requirement_line(line: str) -> tuple[str, str] | None:
     """Return (name, version_spec) for a requirement line, or None to skip it."""
     line = _strip_comment(line).strip()
 
@@ -151,7 +156,7 @@ def _parse_requirement_line(line):
     return name, spec
 
 
-def _pinned_pip_version(spec):
+def _pinned_pip_version(spec: str) -> str | None:
     """Return the exact version if spec is a single '==X' pin, otherwise None."""
     if not spec.startswith("==") or spec.startswith("==="):
         return None
@@ -161,14 +166,14 @@ def _pinned_pip_version(spec):
     return version
 
 
-def _pip_version(spec):
+def _pip_version(spec: str) -> str:
     pinned = _pinned_pip_version(spec)
     return pinned if pinned is not None else spec
 
 
-def _pypi_purl(name, spec):
+def _pypi_purl(name: str, spec: str) -> str:
     # PEP 503 normalisation: lowercase, runs of '-', '_' and '.' become '-'
-    normalized = []
+    normalized: list[str] = []
     for char in name.lower():
         if char in "-_.":
             if not normalized or normalized[-1] != "-":
@@ -186,7 +191,7 @@ def _pypi_purl(name, spec):
 # --- package.json -----------------------------------------------------------
 
 
-def parse_package_json(path):
+def parse_package_json(path: StrPath) -> list[Dependency]:
     """Parse the dependency sections of an npm package.json file."""
     path = os.path.abspath(path)
     text = _read_text(path)
@@ -198,7 +203,7 @@ def parse_package_json(path):
     if not isinstance(data, dict):
         raise DependencyFileError(f"'{path}' does not contain a JSON object")
 
-    dependencies = []
+    dependencies: list[Dependency] = []
     for section, scope in NPM_SECTIONS:
         entries = data.get(section)
         if not isinstance(entries, dict):
@@ -218,7 +223,7 @@ def parse_package_json(path):
     return dependencies
 
 
-def _exact_npm_version(spec):
+def _exact_npm_version(spec: str) -> str | None:
     """Return spec without a leading '=' or 'v' if it is an exact x.y.z version."""
     version = spec.strip().lstrip("=v")
     core = version.split("+", 1)[0].split("-", 1)[0]
@@ -228,7 +233,7 @@ def _exact_npm_version(spec):
     return None
 
 
-def _npm_purl(name, spec):
+def _npm_purl(name: str, spec: str) -> str:
     if name.startswith("@") and "/" in name:
         scope, package = name[1:].split("/", 1)
         purl = "pkg:npm/%40" + _purl_encode(scope) + "/" + _purl_encode(package)
@@ -244,7 +249,7 @@ def _npm_purl(name, spec):
 # --- helpers ----------------------------------------------------------------
 
 
-def _read_text(path):
+def _read_text(path: str) -> str:
     try:
         with open(path, encoding="utf-8-sig") as f:
             return f.read()
@@ -254,9 +259,9 @@ def _read_text(path):
         raise DependencyFileError(f"could not read '{path}': {e.strerror}") from e
 
 
-def _purl_encode(value):
+def _purl_encode(value: str) -> str:
     safe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_~"
-    encoded = []
+    encoded: list[str] = []
     for char in value:
         if char in safe:
             encoded.append(char)

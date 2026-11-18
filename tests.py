@@ -1,9 +1,13 @@
 #intended with pytest
 import csv
 import json
+import os
+import runpy
 import sys
 import pytest
 import sbom
+
+SBOM_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sbom.py")
 
 
 def make_repo(root, name, requirements=None, package_json=None):
@@ -37,8 +41,8 @@ def test_counts_pip_and_npm_deps(tmp_path):
 def test_missing_directory_exits_nonzero(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["sbom.py", str(tmp_path / "nope")])
     with pytest.raises(SystemExit) as exc:
-        sbom.main()
-    assert exc.value.code != 0
+        runpy.run_path(SBOM_SCRIPT, run_name="__main__")
+    assert exc.value.code == 1
 
 
 def run_cli(*args):
