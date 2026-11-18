@@ -195,7 +195,7 @@ def _is_hash(value: str) -> bool:
 
 def write_csv(dependencies: Iterable[Dependency], path: StrPath) -> None:
     """Write the dependencies to a CSV file, one row per dependency."""
-    with open(path, "w", newline="", encoding="utf-8") as f:
+    with open(path, "w", newline="", encoding="utf-8", errors="backslashreplace") as f:
         writer = csv.DictWriter(f, fieldnames=COLUMNS, extrasaction="ignore")
         writer.writeheader()
         for dep in dependencies:
@@ -227,7 +227,8 @@ def write_json(
         "repositories": list(repositories),
         "dependencies": [{col: dep.get(col, "") for col in COLUMNS} for dep in dependencies],
     }
-    with open(path, "w", encoding="utf-8") as f:
+    # backslashreplace: file names that aren't valid UTF-8 are written as \udcff etc.
+    with open(path, "w", encoding="utf-8", errors="backslashreplace") as f:
         json.dump(document, f, indent=2, ensure_ascii=False)
         f.write("\n")
 

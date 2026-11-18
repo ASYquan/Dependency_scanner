@@ -8,6 +8,10 @@ nothing to install.
 
 ## Usage
 
+The argument must be a directory that contains at least one git repository
+as a direct subdirectory. Passing a repository itself is not supported; pass
+the directory that contains it instead.
+
 ```
 $ python3 sbom.py /home/alice/code/repos/
 Found 10 repositories in '/home/alice/code/repos'

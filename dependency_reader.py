@@ -6,6 +6,7 @@ and returns one record per dependency.
 
 import json
 import os
+import re
 from collections.abc import Iterator
 
 REQUIREMENTS_FILE = "requirements.txt"
@@ -121,9 +122,9 @@ def _parse_requirement_line(line: str) -> tuple[str, str] | None:
         return None
 
     # Per-requirement options, e.g. 'pkg==1.0 --hash=sha256:...'
-    option_start = line.find(" --")
-    if option_start != -1:
-        line = line[:option_start]
+    option = re.search(r"\s--", line)
+    if option:
+        line = line[: option.start()]
 
     # Environment markers, e.g. 'pywin32==306; sys_platform == "win32"'
     line = line.split(";", 1)[0].strip()
@@ -201,7 +202,8 @@ def parse_package_json(path: StrPath) -> list[Dependency]:
 
     try:
         data = json.loads(text)
-    except ValueError as e:
+    except (ValueError, RecursionError) as e:
+        # RecursionError: nested too deeply to parse, e.g. '[[[[...'
         raise DependencyFileError(f"'{path}' is not valid JSON: {e}") from e
     if not isinstance(data, dict):
         raise DependencyFileError(f"'{path}' does not contain a JSON object")
@@ -212,7 +214,8 @@ def parse_package_json(path: StrPath) -> list[Dependency]:
         if not isinstance(entries, dict):
             continue
         for name, spec in entries.items():
-            spec = spec if isinstance(spec, str) else str(spec)
+            # npm versions are strings; show anything else as it's written in the file
+            spec = spec if isinstance(spec, str) else json.dumps(spec)
             dependencies.append(
                 {
                     "name": name,
@@ -231,7 +234,7 @@ def _exact_npm_version(spec: str) -> str | None:
     version = spec.strip().lstrip("=v")
     core = version.split("+", 1)[0].split("-", 1)[0]
     parts = core.split(".")
-    if len(parts) == 3 and all(part.isdigit() for part in parts):
+    if len(parts) == 3 and all(part.isascii() and part.isdigit() for part in parts):
         return version
     return None
 
