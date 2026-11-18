@@ -57,6 +57,7 @@ EXIT_USAGE = 2
 
 
 class RepositoryInfo(TypedDict):
+    """Summary of one scanned repository, as written to sbom.json."""
     name: str
     path: str
     commit: str
@@ -87,6 +88,7 @@ def scan(root: StrPath) -> list[Dependency]:
 
 
 def _scan_repo(repo: str, commit: str | None = None) -> list[Dependency]:
+    """Return one repository's dependencies, each tagged with its commit."""
     if commit is None:
         commit = git_commit(repo)
     dependencies = read_repo(repo)
@@ -120,6 +122,7 @@ def git_commit(repo_path: StrPath) -> str:
 
 
 def _git_dir(repo_path: StrPath) -> str | None:
+    """Return the repository's git directory, following a .git file if needed."""
     dot_git = os.path.join(repo_path, ".git")
     if os.path.isdir(dot_git):
         return dot_git
@@ -133,6 +136,7 @@ def _git_dir(repo_path: StrPath) -> str | None:
 
 
 def _common_dir(git_dir: str) -> str:
+    """Return the directory holding the shared refs (not git_dir in worktrees)."""
     line = _read_first_line(os.path.join(git_dir, "commondir"))
     if line:
         path = os.path.normpath(os.path.join(git_dir, line))
@@ -142,6 +146,7 @@ def _common_dir(git_dir: str) -> str:
 
 
 def _read_ref(git_dir: str, common_dir: str, ref: str) -> str | None:
+    """Return what a ref such as 'refs/heads/main' points to, or None."""
     if ".." in ref.split("/"):
         return None
     for base in dict.fromkeys((git_dir, common_dir)):
@@ -152,6 +157,7 @@ def _read_ref(git_dir: str, common_dir: str, ref: str) -> str | None:
 
 
 def _packed_ref(git_dir: str, ref: str) -> str | None:
+    """Look up a ref in packed-refs, where git stores refs in bulk."""
     try:
         with open(os.path.join(git_dir, "packed-refs"), encoding="utf-8") as f:
             for line in f:
@@ -166,6 +172,7 @@ def _packed_ref(git_dir: str, ref: str) -> str | None:
 
 
 def _read_first_line(path: str) -> str | None:
+    """Return the first line of a file, stripped, or None if unreadable."""
     try:
         with open(path, encoding="utf-8") as f:
             return f.readline().strip()
@@ -174,6 +181,7 @@ def _read_first_line(path: str) -> str | None:
 
 
 def _is_hash(value: str) -> bool:
+    """Return True if value looks like a git commit hash (SHA-1 or SHA-256)."""
     return len(value) in (40, 64) and all(c in string.hexdigits for c in value)
 
 
@@ -181,6 +189,7 @@ def _is_hash(value: str) -> bool:
 
 
 def write_csv(dependencies: Iterable[Dependency], path: StrPath) -> None:
+    """Write the dependencies to a CSV file, one row per dependency."""
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=COLUMNS, extrasaction="ignore")
         writer.writeheader()
@@ -205,6 +214,7 @@ def write_json(
     root: StrPath,
     repositories: Iterable[RepositoryInfo] = (),
 ) -> None:
+    """Write the dependencies and repository summaries to a JSON file."""
     document = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tool": "sbom.py",
@@ -221,14 +231,17 @@ def write_json(
 
 
 def _plural(count: int, singular: str, plural: str) -> str:
+    """Return e.g. '1 repository' or '3 repositories'."""
     return f"{count} {singular if count == 1 else plural}"
 
 
 def _error(message: str) -> None:
+    """Print an error message to stderr."""
     print(f"Error: {message}", file=sys.stderr)
 
 
 def _warning(message: str) -> None:
+    """Print a warning to stderr."""
     print(f"Warning: {message}", file=sys.stderr)
 
 
@@ -277,6 +290,7 @@ def _find_repos_in(root: str) -> list[str]:
 
 
 def _no_repos_message(root: str) -> str:
+    """Return the 'no repositories' error, with a hint if root is a repo itself."""
     message = f"no git repositories found in '{root}'"
     if os.path.exists(os.path.join(root, ".git")):
         message += (
@@ -331,6 +345,7 @@ def _scan_repos(
 def _save(
     root: str, dependencies: list[Dependency], repositories: list[RepositoryInfo]
 ) -> None:
+    """Write sbom.csv and sbom.json into root and print where they were saved."""
     csv_path = os.path.join(root, CSV_FILE)
     json_path = os.path.join(root, JSON_FILE)
     try:
