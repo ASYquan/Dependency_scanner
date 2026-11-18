@@ -2,14 +2,10 @@
 
 Looks for requirements.txt and package.json in the top level of the repository
 and returns one record per dependency.
-
-Usage:
-    python3 dependency_reader.py /path/to/repo
 """
 
 import json
 import os
-import sys
 
 REQUIREMENTS_FILE = "requirements.txt"
 PACKAGE_JSON_FILE = "package.json"
@@ -146,9 +142,7 @@ def _parse_requirement_line(line):
         if close == -1:
             return None
         rest = rest[close + 1 :].strip()
-
     if rest.startswith("@"):
-        # Direct reference: 'pkg @ https://example.com/pkg.tar.gz'
         return name, rest[1:].strip()
 
     spec = "".join(rest.split())
@@ -269,55 +263,3 @@ def _purl_encode(value):
         else:
             encoded.extend(f"%{byte:02X}" for byte in char.encode("utf-8"))
     return "".join(encoded)
-
-
-# --- command line -----------------------------------------------------------
-
-
-def _print_table(dependencies):
-    columns = ("name", "version", "type", "scope")
-    widths = {
-        col: max([len(col)] + [len(dep[col]) for dep in dependencies])
-        for col in columns
-    }
-    print("  ".join(col.upper().ljust(widths[col]) for col in columns).rstrip())
-    for dep in dependencies:
-        print("  ".join(dep[col].ljust(widths[col]) for col in columns).rstrip())
-
-
-def main(argv=None):
-    args = sys.argv[1:] if argv is None else argv
-    usage = f"Usage: python3 {os.path.basename(sys.argv[0])} <repository directory>"
-
-    if args in (["-h"], ["--help"]):
-        print(usage)
-        return 0
-    if len(args) != 1:
-        print(usage, file=sys.stderr)
-        return 2
-
-    repo_path = os.path.abspath(args[0])
-    try:
-        files = find_dependency_files(repo_path)
-        if not files:
-            print(
-                f"Error: no {REQUIREMENTS_FILE} or {PACKAGE_JSON_FILE} found in '{repo_path}'",
-                file=sys.stderr,
-            )
-            return 1
-        dependencies = read_repo(repo_path)
-    except (NotADirectoryError, DependencyFileError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-
-    if dependencies:
-        _print_table(dependencies)
-        print()
-    file_list = ", ".join(os.path.basename(f) for f in files)
-    noun = "dependency" if len(dependencies) == 1 else "dependencies"
-    print(f"Found {len(dependencies)} {noun} in '{repo_path}' ({file_list})")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
