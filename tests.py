@@ -199,11 +199,54 @@ def test_csv_escapes_formulas(tmp_path):
     ]
 
 
-@pytest.mark.parametrize("value", ["=1+1", "+1", "-1", "@SUM(A1)", "\t=1", "\r=1"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "=1+1",
+        "+1",
+        "-1",
+        "@SUM(A1)",
+        "\t=1",
+        "\r=1",
+        "@scope/name(1)",
+        "@scope/a|cmd",
+        "@Scope/Name",
+        "@scope",
+        "@babel/core\n=1",
+    ],
+)
 def test_csv_safe_prefixes_formulas(value):
     assert sbom._csv_safe(value) == "'" + value
 
 
-@pytest.mark.parametrize("value", ["requests", "2.31.0", "^18.2.0", ">=2.0", "", "a=b"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "requests",
+        "2.31.0",
+        "^18.2.0",
+        ">=2.0",
+        "",
+        "a=b",
+        "@babel/core",
+        "@emotion/react",
+        "@types/node",
+        "@mui/x-date-pickers",
+    ],
+)
 def test_csv_safe_keeps_normal_values(value):
     assert sbom._csv_safe(value) == value
+
+
+def test_csv_keeps_scoped_npm_names(tmp_path):
+    make_repo(
+        tmp_path,
+        "gui",
+        package_json={
+            "dependencies": {"@emotion/react": "11.13.0"},
+            "devDependencies": {"@babel/core": "7.25.2"},
+        },
+    )
+    assert run_cli(tmp_path) == 0
+    with open(tmp_path / "sbom.csv", newline="") as f:
+        assert [r["name"] for r in csv.DictReader(f)] == ["@emotion/react", "@babel/core"]
