@@ -123,6 +123,7 @@ included:
 - Support `pyproject.toml`, `Pipfile.lock` and `yarn.lock`.
 - Look up known vulnerabilities for each dependency, for example in the OSV or NVD database.
 - Compare two SBOMs to show which dependencies were added, removed or upgraded.
+- Dependency history. Each run only describes the repository at its current commit, so a package that was removed earlier no longer appears. For incident response it is still useful to know whether a vulnerable package was ever used, and in which commits. This would be a separate history file listing every dependency that has appeared in the git history, with the commits where it was added and removed. It would not go into `sbom.csv`, because a removed package mixed in with the current ones looks like a match when checking "are we affected?". Reading older commits means decoding git's object storage (compressed objects and pack files) without running `git`, so it is a larger change.
 - Search the SBOM: "which repositories use libawesomejson 1.2.3?"
 - Recursive scanning with a configurable depth.
 - Read the commit from reftable repositories, or at least warn when it can't be found.
