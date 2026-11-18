@@ -12,6 +12,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import string
 import sys
 from collections.abc import Iterable, Sequence
@@ -50,6 +51,10 @@ COLUMNS = ("name", "version", "type", "path", "scope", "purl", "repository", "co
 
 # Spreadsheet programs treat cells starting with these as formulas
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+# Scoped npm package names such as '@babel/core' start with '@', but npm only
+# allows characters that can't form a formula call, so they are left as is.
+SCOPED_NPM_NAME = re.compile(r"@[a-z0-9~-][a-z0-9._~-]*/[a-z0-9~-][a-z0-9._~-]*")
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -203,7 +208,7 @@ def _csv_safe(value: str) -> str:
     Package names and versions come from files in the scanned repositories, so
     a value like '=HYPERLINK(...)' must not run when sbom.csv is opened.
     """
-    if value.startswith(FORMULA_PREFIXES):
+    if value.startswith(FORMULA_PREFIXES) and not SCOPED_NPM_NAME.fullmatch(value):
         return "'" + value
     return value
 
