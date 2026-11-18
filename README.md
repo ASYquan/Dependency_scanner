@@ -102,7 +102,7 @@ included:
 
 - Files included with `-r` / `-c` in `requirements.txt` are not followed.
 - Versions are the specifiers from the dependency files, not the versions that are actually installed. A range such as `>=2.0` is not resolved.
-- Indirect pip dependencies are not included, because Python lock files (`uv.lock`, `poetry.lock`) are not read.
+- Python lock files (`uv.lock`, `poetry.lock`) are not read, so indirect pip dependencies are missing. Both are TOML files, and Python's built-in TOML parser (`tomllib`) only exists from Python 3.11, while this tool also supports 3.10. For example, the `requirements.txt` of [cf-remote](https://github.com/cfengine/cf-remote) lists 1 package, but its `uv.lock` shows that installing it brings in 6.
 - Direct npm dependencies show the version range from `package.json`, not the version installed according to `package-lock.json`.
 - Repositories nested deeper than one level, and dependency files in subdirectories (monorepos), are not found.
 - Other dependency files (`pyproject.toml`, `setup.py`, `Pipfile`, `yarn.lock`, ...) are not supported.
@@ -110,9 +110,9 @@ included:
 
 ## Ideas for next features
 
-- Read Python lock files (`uv.lock`, `poetry.lock`) for indirect pip dependencies.
+- Read `uv.lock` and `poetry.lock` for indirect pip dependencies, using `tomllib` on Python 3.11+ and skipping them with a warning on 3.10.
 - Add the `integrity` hash from `package-lock.json`, which identifies exactly which file was installed.
-- Support `pyproject.toml`, `Pipfile.lock`, `poetry.lock` and `yarn.lock`.
+- Support `pyproject.toml`, `Pipfile.lock` and `yarn.lock`.
 - Look up known vulnerabilities for each dependency, for example in the OSV or NVD database.
 - Compare two SBOMs to show which dependencies were added, removed or upgraded.
 - Search the SBOM: "which repositories use libawesomejson 1.2.3?"
