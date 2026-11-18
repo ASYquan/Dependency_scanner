@@ -103,6 +103,7 @@ def _join_continued_lines(text: str) -> Iterator[str]:
 
 
 def _strip_comment(line: str) -> str:
+    """Remove a trailing '# comment' from a requirements line."""
     # pip only treats '#' as a comment at the start of a line or after
     # whitespace, so URL fragments like '#egg=name' are left alone.
     for i, char in enumerate(line):
@@ -167,11 +168,13 @@ def _pinned_pip_version(spec: str) -> str | None:
 
 
 def _pip_version(spec: str) -> str:
+    """Return the pinned version, or the spec as written if it isn't pinned."""
     pinned = _pinned_pip_version(spec)
     return pinned if pinned is not None else spec
 
 
 def _pypi_purl(name: str, spec: str) -> str:
+    """Return the package URL of a PyPI package (version only if pinned)."""
     # PEP 503 normalisation: lowercase, runs of '-', '_' and '.' become '-'
     normalized: list[str] = []
     for char in name.lower():
@@ -234,6 +237,7 @@ def _exact_npm_version(spec: str) -> str | None:
 
 
 def _npm_purl(name: str, spec: str) -> str:
+    """Return the package URL of an npm package (version only if exact)."""
     if name.startswith("@") and "/" in name:
         scope, package = name[1:].split("/", 1)
         purl = "pkg:npm/%40" + _purl_encode(scope) + "/" + _purl_encode(package)
@@ -250,6 +254,7 @@ def _npm_purl(name: str, spec: str) -> str:
 
 
 def _read_text(path: str) -> str:
+    """Return the contents of a text file, or raise DependencyFileError."""
     try:
         with open(path, encoding="utf-8-sig") as f:
             return f.read()
@@ -260,6 +265,7 @@ def _read_text(path: str) -> str:
 
 
 def _purl_encode(value: str) -> str:
+    """Percent-encode value for use in a package URL."""
     safe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_~"
     encoded: list[str] = []
     for char in value:
