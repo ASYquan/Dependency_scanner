@@ -17,9 +17,17 @@ import string
 import sys
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
-from typing import TypedDict
 
-from dependency_reader import (
+# Checked before the imports below, which fail on older versions
+if sys.version_info < (3, 10):
+    sys.exit(
+        f"Error: sbom.py requires Python 3.10 or newer, "
+        f"this is Python {sys.version.split()[0]}"
+    )
+
+from typing import TypedDict  # noqa: E402
+
+from dependency_reader import (  # noqa: E402
     PACKAGE_JSON_FILE,
     REQUIREMENTS_FILE,
     Dependency,

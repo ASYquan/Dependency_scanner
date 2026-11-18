@@ -626,6 +626,13 @@ def test_help(capsys):
     assert "usage" in capsys.readouterr().out
 
 
+def test_old_python_version_is_rejected(monkeypatch):
+    monkeypatch.setattr(sys, "version_info", (3, 9, 18, "final", 0))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(SBOM_SCRIPT)
+    assert "requires Python 3.10 or newer" in str(exc.value.code)
+
+
 def test_repo_without_dependency_files_is_skipped(tmp_path, capsys):
     make_repo(tmp_path, "empty")
     make_repo(tmp_path, "app", requirements="flask\n")
