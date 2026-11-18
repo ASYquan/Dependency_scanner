@@ -683,3 +683,224 @@ def test_unreadable_dependency_file(tmp_path, capsys):
     finally:
         (repo / "requirements.txt").chmod(0o644)
     assert "could not read" in capsys.readouterr().err
+
+
+# --- package-lock.json (indirect dependencies) ------------------------------
+
+
+def write_lock(repo, content):
+    path = repo / "package-lock.json"
+    path.write_text(content if isinstance(content, str) else json.dumps(content))
+    return path
+
+
+def lock_rows(deps):
+    return [(d["name"], d["version"], d["scope"], d["relationship"]) for d in deps]
+
+
+V3_LOCK = {
+    "name": "app",
+    "lockfileVersion": 3,
+    "packages": {
+        "": {"name": "app", "dependencies": {"react": "^18.2.0"}},
+        "node_modules/react": {"version": "18.2.0"},
+        "node_modules/jest": {"version": "29.7.0", "dev": True},
+        "node_modules/loose-envify": {"version": "1.4.0"},
+        "node_modules/@babel/core": {"version": "7.25.2", "dev": True},
+        "node_modules/fsevents": {"version": "2.3.3", "optional": True},
+        "node_modules/devopt": {"version": "1.0.0", "devOptional": True},
+        "node_modules/some-peer": {"version": "2.0.0", "peer": True},
+        "node_modules/jest/node_modules/react": {"version": "17.0.2", "dev": True},
+    },
+}
+
+
+def test_lock_v3_indirect_dependencies(tmp_path):
+    lock = write_lock(tmp_path, V3_LOCK)
+    deps = sbom.parse_package_lock(lock, {"react", "jest"})
+    assert lock_rows(deps) == [
+        ("loose-envify", "1.4.0", "runtime", "indirect"),
+        ("@babel/core", "7.25.2", "dev", "indirect"),
+        ("fsevents", "2.3.3", "optional", "indirect"),
+        ("devopt", "1.0.0", "dev", "indirect"),
+        ("some-peer", "2.0.0", "peer", "indirect"),
+        ("react", "17.0.2", "dev", "indirect"),
+    ]
+    assert {d["path"] for d in deps} == {str(lock)}
+    assert deps[1]["purl"] == "pkg:npm/%40babel/core@7.25.2"
+
+
+def test_lock_without_direct_names_lists_everything(tmp_path):
+    lock = write_lock(tmp_path, V3_LOCK)
+    assert len(sbom.parse_package_lock(lock, set())) == 8
+
+
+def test_lock_same_package_in_several_versions(tmp_path):
+    lock = write_lock(
+        tmp_path,
+        {
+            "lockfileVersion": 3,
+            "packages": {
+                "node_modules/a/node_modules/types": {"version": "7.17.0"},
+                "node_modules/b/node_modules/types": {"version": "7.17.0"},
+                "node_modules/c/node_modules/types": {"version": "7.25.2"},
+                "node_modules/d/node_modules/types": {"version": "7.25.2", "dev": True},
+            },
+        },
+    )
+    assert lock_rows(sbom.parse_package_lock(lock, set())) == [
+        ("types", "7.17.0", "runtime", "indirect"),
+        ("types", "7.25.2", "runtime", "indirect"),
+        ("types", "7.25.2", "dev", "indirect"),
+    ]
+
+
+def test_lock_skips_project_links_and_workspaces(tmp_path):
+    lock = write_lock(
+        tmp_path,
+        {
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"name": "app", "version": "1.0.0"},
+                "packages/ui": {"name": "ui", "version": "1.0.0"},
+                "node_modules/ui": {"resolved": "packages/ui", "link": True},
+                "node_modules/real": {"version": "1.0.0"},
+            },
+        },
+    )
+    assert [d["name"] for d in sbom.parse_package_lock(lock, set())] == ["real"]
+
+
+def test_lock_v2_reads_packages_only_once(tmp_path):
+    lock = write_lock(
+        tmp_path,
+        {
+            "lockfileVersion": 2,
+            "packages": {"node_modules/a": {"version": "1.0.0"}},
+            "dependencies": {"a": {"version": "1.0.0"}},
+        },
+    )
+    assert lock_rows(sbom.parse_package_lock(lock, set())) == [
+        ("a", "1.0.0", "runtime", "indirect"),
+    ]
+
+
+def test_lock_v1_nested_tree(tmp_path):
+    lock = write_lock(
+        tmp_path,
+        {
+            "lockfileVersion": 1,
+            "dependencies": {
+                "react": {"version": "18.2.0"},
+                "loose-envify": {"version": "1.4.0"},
+                "jest": {
+                    "version": "29.7.0",
+                    "dev": True,
+                    "dependencies": {"react": {"version": "17.0.2", "dev": True}},
+                },
+                "fsevents": {"version": "2.3.3", "optional": True},
+            },
+        },
+    )
+    assert lock_rows(sbom.parse_package_lock(lock, {"react", "jest"})) == [
+        ("loose-envify", "1.4.0", "runtime", "indirect"),
+        ("fsevents", "2.3.3", "optional", "indirect"),
+        ("react", "17.0.2", "dev", "indirect"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"lockfileVersion": 3, "packages": {"node_modules/a": "not an object"}},
+        {"lockfileVersion": 3, "packages": "not an object"},
+        {"lockfileVersion": 1, "dependencies": {"a": None}},
+        {"lockfileVersion": 3},
+        {},
+    ],
+)
+def test_lock_odd_content_gives_no_rows(tmp_path, content):
+    assert sbom.parse_package_lock(write_lock(tmp_path, content), set()) == []
+
+
+def test_lock_non_string_version(tmp_path):
+    lock = write_lock(tmp_path, {"packages": {"node_modules/a": {"version": 5}}})
+    assert sbom.parse_package_lock(lock, set())[0]["version"] == ""
+
+
+@pytest.mark.parametrize(
+    "content, message",
+    [
+        ("{not json", "not valid JSON"),
+        ("[]", "does not contain a JSON object"),
+        ("[" * 100_000, "not valid JSON"),
+    ],
+)
+def test_invalid_lock(tmp_path, content, message):
+    with pytest.raises(sbom.DependencyFileError, match=message):
+        sbom.parse_package_lock(write_lock(tmp_path, content), set())
+
+
+def test_relationship_in_sbom(tmp_path):
+    make_repo(tmp_path, "py", requirements="flask\n")
+    repo = make_repo(
+        tmp_path,
+        "web",
+        package_json={"dependencies": {"react": "^18.2.0"}},
+    )
+    write_lock(repo, V3_LOCK)
+    assert run_cli(tmp_path) == 0
+
+    rows = read_csv(tmp_path)
+    assert [(r["repository"], r["name"], r["version"], r["relationship"]) for r in rows] == [
+        ("py", "flask", "", "direct"),
+        ("web", "react", "^18.2.0", "direct"),
+        ("web", "jest", "29.7.0", "indirect"),
+        ("web", "loose-envify", "1.4.0", "indirect"),
+        ("web", "@babel/core", "7.25.2", "indirect"),
+        ("web", "fsevents", "2.3.3", "indirect"),
+        ("web", "devopt", "1.0.0", "indirect"),
+        ("web", "some-peer", "2.0.0", "indirect"),
+        ("web", "react", "17.0.2", "indirect"),
+    ]
+    assert read_json(tmp_path)["dependencies"] == rows
+
+    web = read_json(tmp_path)["repositories"][1]
+    assert web["files"] == [str(repo / "package.json"), str(repo / "package-lock.json")]
+    assert web["dependency_count"] == 8
+
+
+def test_lock_ignored_without_package_json(tmp_path, capsys):
+    only_lock = make_repo(tmp_path, "only_lock")
+    write_lock(only_lock, V3_LOCK)
+    python = make_repo(tmp_path, "python", requirements="flask\n")
+    write_lock(python, V3_LOCK)
+    assert run_cli(tmp_path) == 0
+    assert "no requirements.txt or package.json in" in capsys.readouterr().err
+    assert [r["name"] for r in read_csv(tmp_path)] == ["flask"]
+
+
+def test_invalid_lock_skips_repo(tmp_path, capsys):
+    bad = make_repo(tmp_path, "bad", package_json={"dependencies": {"react": "18.2.0"}})
+    write_lock(bad, "{not json")
+    make_repo(tmp_path, "good", requirements="flask\n")
+    assert run_cli(tmp_path) == 1
+    err = capsys.readouterr().err
+    assert "skipping 'bad'" in err and "package-lock.json" in err
+    assert [r["name"] for r in read_csv(tmp_path)] == ["flask"]
+
+
+def test_deep_v1_lock_does_not_crash(tmp_path):
+    repo = make_repo(tmp_path, "deep", package_json={"dependencies": {}})
+    depth = 3000
+    write_lock(
+        repo,
+        '{"lockfileVersion": 1, "dependencies": '
+        + '{"a": {"version": "1.0.0", "dependencies": ' * depth
+        + "{}"
+        + "}}" * depth
+        + "}",
+    )
+    # Either parsed (and walked without recursion) or rejected as too deep,
+    # but never a crash.
+    assert run_cli(tmp_path) in (0, 1)
