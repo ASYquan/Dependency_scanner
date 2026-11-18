@@ -93,6 +93,7 @@ included:
 - `sbom.py`: command line tool. Finds the repositories, reads the git commit and writes the CSV and JSON files.
 - `dependency_reader.py`: parses `requirements.txt`, `package.json` and `package-lock.json` for a single repository.
 - `tests.py`: tests, run with `python -m pytest tests.py -v`. They also run in CI on every pull request.
+- `edge_cases.py`: extra tests for unusual input (named pipes, symlinks, odd file names, UTF-16), run with `python -m pytest edge_cases.py -v`. Not run in CI. Tests marked as expected failures are known issues that aren't fixed yet.
 
 ## Assumptions
 
@@ -124,7 +125,11 @@ included:
 - Look up known vulnerabilities for each dependency, for example in the OSV or NVD database.
 - Compare two SBOMs to show which dependencies were added, removed or upgraded.
 - Dependency history. Each run only describes the repository at its current commit, so a package that was removed earlier no longer appears. For incident response it is still useful to know whether a vulnerable package was ever used, and in which commits. This would be a separate history file listing every dependency that has appeared in the git history, with the commits where it was added and removed. It would not go into `sbom.csv`, because a removed package mixed in with the current ones looks like a match when checking "are we affected?". Reading older commits means decoding git's object storage (compressed objects and pack files) without running `git`, so it is a larger change.
-- Search the SBOM: "which repositories use libawesomejson 1.2.3?"
+- A search command for "which repositories use libawesomejson 1.2.3?". Exact pins can already be found by filtering the CSV, for example `grep 'libawesomejson,1.2.3,' sbom.csv`, and the `repository` and `commit` columns show where. A plain text search misses some cases, which the command would handle:
+  - Version ranges: a repository with `libawesomejson>=1.0` or `^1.2.0` may install 1.2.3, but its version column doesn't contain `1.2.3`. The command would check whether the range includes the version, using pip's and npm's rules.
+  - Affected ranges: security advisories usually name a range such as "below 1.2.4", not a single version. The command would accept a range and list every row inside it.
+  - Name variants: pip treats `libawesomejson`, `LibAwesomeJSON` and `libawesome_json` as the same package. The `purl` column already uses the normalised name, so matching on it would catch these.
+  - A summary instead of raw rows: which repositories are affected, at which commit, and which ones only have a range that might include the version.
 - Recursive scanning with a configurable depth.
 - Read the commit from reftable repositories, or at least warn when it can't be found.
 - License information for each dependency.
