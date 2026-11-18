@@ -104,8 +104,9 @@ included:
 
 - Read `package-lock.json` to include indirect npm dependencies, with the exact installed versions.
 - Support `pyproject.toml`, `Pipfile.lock`, `poetry.lock` and `yarn.lock`.
-- Look up known vulnerabilities for each dependency, for example in the OSV database.
+- Look up known vulnerabilities for each dependency, for example in the OSV or NVD database.
 - Compare two SBOMs to show which dependencies were added, removed or upgraded.
 - Search the SBOM: "which repositories use libawesomejson 1.2.3?"
 - Recursive scanning with a configurable depth.
 - License information for each dependency.
+
