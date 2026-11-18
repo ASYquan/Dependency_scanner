@@ -27,6 +27,7 @@ from dependency_reader import (
     StrPath,
     find_dependency_files,
     parse_package_json,
+    parse_package_lock,
     parse_requirements,
     read_repo,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "find_repos",
     "git_commit",
     "parse_package_json",
+    "parse_package_lock",
     "parse_requirements",
     "run",
     "scan",
@@ -47,7 +49,17 @@ __all__ = [
 
 CSV_FILE = "sbom.csv"
 JSON_FILE = "sbom.json"
-COLUMNS = ("name", "version", "type", "path", "scope", "purl", "repository", "commit")
+COLUMNS = (
+    "name",
+    "version",
+    "type",
+    "path",
+    "scope",
+    "relationship",
+    "purl",
+    "repository",
+    "commit",
+)
 
 # Spreadsheet programs treat cells starting with these as formulas
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")

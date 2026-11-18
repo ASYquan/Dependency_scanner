@@ -1,16 +1,19 @@
 """Read pip and npm dependencies from a single source code repository.
 
 Looks for requirements.txt and package.json in the top level of the repository
-and returns one record per dependency.
+and returns one record per dependency. If package-lock.json is present next to
+package.json, the indirect npm dependencies are read from it as well.
 """
 
 import json
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
+from typing import Any
 
 REQUIREMENTS_FILE = "requirements.txt"
 PACKAGE_JSON_FILE = "package.json"
+PACKAGE_LOCK_FILE = "package-lock.json"
 
 # package.json section -> scope written to the SBOM
 NPM_SECTIONS: tuple[tuple[str, str], ...] = (
@@ -22,7 +25,8 @@ NPM_SECTIONS: tuple[tuple[str, str], ...] = (
 
 VERSION_OPERATOR_CHARS = "=<>!~("
 
-# A dependency record: name, version, type, scope, path, purl and repository
+# A dependency record: name, version, type, scope, relationship, path, purl
+# and repository
 Dependency = dict[str, str]
 StrPath = str | os.PathLike[str]
 
@@ -32,7 +36,10 @@ class DependencyFileError(Exception):
 
 
 def find_dependency_files(repo_path: StrPath) -> list[str]:
-    """Return absolute paths of the dependency files in the top level of repo_path."""
+    """Return absolute paths of the dependency files in the top level of repo_path.
+
+    package-lock.json is only included when package.json is there too.
+    """
     repo_path = os.path.abspath(repo_path)
     if not os.path.isdir(repo_path):
         raise NotADirectoryError(f"'{repo_path}' is not a directory")
@@ -42,6 +49,9 @@ def find_dependency_files(repo_path: StrPath) -> list[str]:
         path = os.path.join(repo_path, filename)
         if os.path.isfile(path):
             found.append(path)
+    lock = os.path.join(repo_path, PACKAGE_LOCK_FILE)
+    if os.path.join(repo_path, PACKAGE_JSON_FILE) in found and os.path.isfile(lock):
+        found.append(lock)
     return found
 
 
@@ -51,11 +61,17 @@ def read_repo(repo_path: StrPath) -> list[Dependency]:
     repository = os.path.basename(repo_path.rstrip(os.sep))
 
     dependencies: list[Dependency] = []
+    direct_npm: set[str] = set()
     for path in find_dependency_files(repo_path):
-        if os.path.basename(path) == REQUIREMENTS_FILE:
+        filename = os.path.basename(path)
+        if filename == REQUIREMENTS_FILE:
             dependencies.extend(parse_requirements(path))
+        elif filename == PACKAGE_JSON_FILE:
+            npm = parse_package_json(path)
+            direct_npm.update(dep["name"] for dep in npm)
+            dependencies.extend(npm)
         else:
-            dependencies.extend(parse_package_json(path))
+            dependencies.extend(parse_package_lock(path, direct_npm))
 
     for dep in dependencies:
         dep["repository"] = repository
@@ -82,6 +98,7 @@ def parse_requirements(path: StrPath) -> list[Dependency]:
                 "version": _pip_version(spec),
                 "type": "pip",
                 "scope": "runtime",
+                "relationship": "direct",
                 "path": path,
                 "purl": _pypi_purl(name, spec),
             }
@@ -198,15 +215,7 @@ def _pypi_purl(name: str, spec: str) -> str:
 def parse_package_json(path: StrPath) -> list[Dependency]:
     """Parse the dependency sections of an npm package.json file."""
     path = os.path.abspath(path)
-    text = _read_text(path)
-
-    try:
-        data = json.loads(text)
-    except (ValueError, RecursionError) as e:
-        # RecursionError: nested too deeply to parse, e.g. '[[[[...'
-        raise DependencyFileError(f"'{path}' is not valid JSON: {e}") from e
-    if not isinstance(data, dict):
-        raise DependencyFileError(f"'{path}' does not contain a JSON object")
+    data = _read_json_object(path)
 
     dependencies: list[Dependency] = []
     for section, scope in NPM_SECTIONS:
@@ -222,11 +231,102 @@ def parse_package_json(path: StrPath) -> list[Dependency]:
                     "version": spec,
                     "type": "npm",
                     "scope": scope,
+                    "relationship": "direct",
                     "path": path,
                     "purl": _npm_purl(name, spec),
                 }
             )
     return dependencies
+
+
+def parse_package_lock(path: StrPath, direct: Collection[str]) -> list[Dependency]:
+    """Return the indirect dependencies recorded in an npm package-lock.json.
+
+    direct holds the package names from package.json. Those are skipped at the
+    top level because package.json already lists them; copies installed deeper
+    in the tree are indirect and included. Identical entries are listed once.
+    """
+    path = os.path.abspath(path)
+    data = _read_json_object(path)
+
+    dependencies: list[Dependency] = []
+    seen: set[tuple[str, str, str]] = set()
+    for name, info, top_level in _lock_entries(data):
+        if top_level and name in direct:
+            continue
+        version = info.get("version")
+        version = version if isinstance(version, str) else ""
+        scope = _lock_scope(info)
+        if (name, version, scope) in seen:
+            continue
+        seen.add((name, version, scope))
+        dependencies.append(
+            {
+                "name": name,
+                "version": version,
+                "type": "npm",
+                "scope": scope,
+                "relationship": "indirect",
+                "path": path,
+                "purl": _npm_purl(name, version),
+            }
+        )
+    return dependencies
+
+
+def _lock_entries(data: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any], bool]]:
+    """Yield (name, entry, is_top_level) for every package in a lock file."""
+    packages = data.get("packages")
+    if isinstance(packages, dict):
+        yield from _lock_entries_flat(packages)
+    elif isinstance(data.get("dependencies"), dict):
+        yield from _lock_entries_nested(data["dependencies"])
+
+
+def _lock_entries_flat(
+    packages: dict[str, Any],
+) -> Iterator[tuple[str, dict[str, Any], bool]]:
+    """Read lockfileVersion 2 and 3: a flat map from install location to package.
+
+    Locations look like 'node_modules/a/node_modules/b'; "" is the project itself.
+    """
+    for location, info in packages.items():
+        if "node_modules/" not in location or not isinstance(info, dict):
+            continue
+        if info.get("link"):  # a local folder, not an installed package
+            continue
+        name = location.rsplit("node_modules/", 1)[1]
+        yield name, info, location == "node_modules/" + name
+
+
+def _lock_entries_nested(
+    tree: dict[str, Any],
+) -> Iterator[tuple[str, dict[str, Any], bool]]:
+    """Read lockfileVersion 1 (npm 6 and older): a nested "dependencies" tree.
+
+    Walked with a list instead of recursion so a deep tree can't crash it.
+    """
+    pending = [(tree, True)]
+    while pending:
+        entries, top_level = pending.pop(0)
+        for name, info in entries.items():
+            if not isinstance(info, dict):
+                continue
+            yield name, info, top_level
+            nested = info.get("dependencies")
+            if isinstance(nested, dict):
+                pending.append((nested, False))
+
+
+def _lock_scope(info: dict[str, Any]) -> str:
+    """Return the scope of a lock file entry from its dev/optional/peer flags."""
+    if info.get("dev") or info.get("devOptional"):
+        return "dev"
+    if info.get("optional"):
+        return "optional"
+    if info.get("peer"):
+        return "peer"
+    return "runtime"
 
 
 def _exact_npm_version(spec: str) -> str | None:
@@ -254,6 +354,19 @@ def _npm_purl(name: str, spec: str) -> str:
 
 
 # --- helpers ----------------------------------------------------------------
+
+
+def _read_json_object(path: str) -> dict[str, Any]:
+    """Return the JSON object in a file, or raise DependencyFileError."""
+    text = _read_text(path)
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError) as e:
+        # RecursionError: nested too deeply to parse, e.g. '[[[[...'
+        raise DependencyFileError(f"'{path}' is not valid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise DependencyFileError(f"'{path}' does not contain a JSON object")
+    return data
 
 
 def _read_text(path: str) -> str:
